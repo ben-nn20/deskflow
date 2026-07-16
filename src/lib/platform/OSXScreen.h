@@ -119,6 +119,10 @@ private:
   bool onMouseButton(bool pressed, uint16_t macButton);
   bool onMouseWheel(int32_t xDelta, int32_t yDelta) const;
 
+  // wheel handler for continuous scroll devices (trackpads, Magic Mouse).
+  // deltas are pixel-precise point deltas from the scroll event.
+  bool onMouseWheelContinuous(double xPixels, double yPixels) const;
+
   void constructMouseButtonEventMap();
 
   bool onKey(CGEventRef event);
@@ -235,6 +239,11 @@ private:
   // mouse state
   mutable int32_t m_xCursor, m_yCursor;
   mutable bool m_cursorPosValid;
+
+  // sub-unit carry for continuous scroll, so slow trackpad scrolls
+  // aren't lost to integer truncation across events
+  mutable double m_scrollPixelRemainderX = 0.0;
+  mutable double m_scrollPixelRemainderY = 0.0;
 
   /* FIXME: this data structure is explicitly marked mutable due
      to a need to track the state of buttons since the remote

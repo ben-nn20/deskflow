@@ -1051,6 +1051,29 @@ bool OSXScreen::onMouseWheel(int32_t xDelta, int32_t yDelta) const
   return true;
 }
 
+bool OSXScreen::onMouseWheelContinuous(double xPixels, double yPixels) const
+{
+  // wheel deltas are in 1/120ths of a notch. one notch on Windows scrolls
+  // 3 lines (~60px in most apps), so 60px of finger travel per notch keeps
+  // content movement on the client roughly 1:1 with the trackpad. no
+  // acceleration is applied here: macOS has already applied the user's
+  // tracking-speed curve to the point deltas.
+  static const double kScrollPixelsPerNotch = 60.0;
+  m_scrollPixelRemainderX += xPixels * (120.0 / kScrollPixelsPerNotch);
+  m_scrollPixelRemainderY += yPixels * (120.0 / kScrollPixelsPerNotch);
+  const auto xDelta = static_cast<int32_t>(m_scrollPixelRemainderX);
+  const auto yDelta = static_cast<int32_t>(m_scrollPixelRemainderY);
+  m_scrollPixelRemainderX -= xDelta;
+  m_scrollPixelRemainderY -= yDelta;
+
+  if (xDelta == 0 && yDelta == 0) {
+    return true;
+  }
+  LOG_VERBOSE("event: continuous wheel delta=%+d,%+d", xDelta, yDelta);
+  sendEvent(EventTypes::PrimaryScreenWheel, WheelInfo::alloc(xDelta, yDelta));
+  return true;
+}
+
 void OSXScreen::displayReconfigurationCallback(
     CGDirectDisplayID displayID, CGDisplayChangeSummaryFlags flags, void *inUserData
 )
@@ -1701,10 +1724,22 @@ CGEventRef OSXScreen::handleCGInputEvent(CGEventTapProxy proxy, CGEventType type
     return event;
     break;
   case kCGEventScrollWheel:
-    screen->onMouseWheel(
-        screen->mapScrollWheelToDeskflow(CGEventGetIntegerValueField(event, kCGScrollWheelEventDeltaAxis2)),
-        screen->mapScrollWheelToDeskflow(CGEventGetIntegerValueField(event, kCGScrollWheelEventDeltaAxis1))
-    );
+    if (CGEventGetIntegerValueField(event, kCGScrollWheelEventIsContinuous) != 0) {
+      // continuous device (trackpad, Magic Mouse): the line-based
+      // deltaAxis fields are quantized to whole lines and useless for
+      // slow scrolls, so forward the pixel-precise point deltas instead.
+      // macOS momentum scroll events also arrive through this path with
+      // point deltas, so clients inherit inertial scrolling.
+      screen->onMouseWheelContinuous(
+          CGEventGetDoubleValueField(event, kCGScrollWheelEventPointDeltaAxis2),
+          CGEventGetDoubleValueField(event, kCGScrollWheelEventPointDeltaAxis1)
+      );
+    } else {
+      screen->onMouseWheel(
+          screen->mapScrollWheelToDeskflow(CGEventGetIntegerValueField(event, kCGScrollWheelEventDeltaAxis2)),
+          screen->mapScrollWheelToDeskflow(CGEventGetIntegerValueField(event, kCGScrollWheelEventDeltaAxis1))
+      );
+    }
     break;
   case kCGEventKeyDown:
   case kCGEventKeyUp:
