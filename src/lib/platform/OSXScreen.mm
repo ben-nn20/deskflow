@@ -778,7 +778,24 @@ bool OSXScreen::trackpadBridgeEnabled()
     const char *v = ::getenv("DESKFLOW_TRACKPAD_BRIDGE");
     cached = (v != nullptr && *v == '1') ? 1 : 0;
     if (cached) {
-      LOG_INFO("trackpad bridge mode enabled: scroll forwarding disabled");
+      LOG_INFO("trackpad bridge mode enabled: sending active-screen updates");
+    }
+  }
+  return cached == 1;
+}
+
+// Scroll suppression is separate from bridge mode: the bridge may be carrying
+// only 3/4-finger gestures while this screen keeps forwarding its own
+// pixel-precise scroll, which is the better feel. Only suppress when the
+// bridge is explicitly taking scroll over, or every scroll lands twice.
+bool OSXScreen::trackpadBridgeSuppressScroll()
+{
+  static int cached = -1;
+  if (cached < 0) {
+    const char *v = ::getenv("DESKFLOW_TRACKPAD_BRIDGE_SUPPRESS_SCROLL");
+    cached = (v != nullptr && *v == '1') ? 1 : 0;
+    if (cached) {
+      LOG_INFO("trackpad bridge: scroll forwarding disabled, bridge owns scroll");
     }
   }
   return cached == 1;
@@ -1093,9 +1110,8 @@ bool OSXScreen::onMouseButton(bool pressed, uint16_t macButton)
 
 bool OSXScreen::onMouseWheel(int32_t xDelta, int32_t yDelta) const
 {
-  // the bridge delivers scroll as real touchpad contacts; forwarding here too
-  // would double every scroll
-  if (trackpadBridgeEnabled()) {
+  // only when the bridge is carrying scroll itself; otherwise it would double
+  if (trackpadBridgeSuppressScroll()) {
     return true;
   }
   LOG_VERBOSE("event: button wheel delta=%+d,%+d", xDelta, yDelta);
@@ -1105,7 +1121,7 @@ bool OSXScreen::onMouseWheel(int32_t xDelta, int32_t yDelta) const
 
 bool OSXScreen::onMouseWheelContinuous(double xPixels, double yPixels) const
 {
-  if (trackpadBridgeEnabled()) {
+  if (trackpadBridgeSuppressScroll()) {
     return true;
   }
   // wheel deltas are in 1/120ths of a notch. one notch on Windows scrolls

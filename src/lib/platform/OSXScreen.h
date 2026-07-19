@@ -128,6 +128,10 @@ private:
   // touchpad on the client and this screen must not also forward scroll.
   static bool trackpadBridgeEnabled();
 
+  // true when DESKFLOW_TRACKPAD_BRIDGE_SUPPRESS_SCROLL=1, meaning the bridge
+  // carries scroll itself and this screen must not also forward it
+  static bool trackpadBridgeSuppressScroll();
+
   // tell the capture process whether the remote screen is currently active
   void notifyTrackpadBridge(bool remoteActive) const;
 
