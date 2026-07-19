@@ -123,6 +123,14 @@ private:
   // deltas are pixel-precise point deltas from the scroll event.
   bool onMouseWheelContinuous(double xPixels, double yPixels) const;
 
+  // trackpad bridge: true when DESKFLOW_TRACKPAD_BRIDGE=1, meaning a
+  // companion capture process streams multitouch to a virtual precision
+  // touchpad on the client and this screen must not also forward scroll.
+  static bool trackpadBridgeEnabled();
+
+  // tell the capture process whether the remote screen is currently active
+  void notifyTrackpadBridge(bool remoteActive) const;
+
   void constructMouseButtonEventMap();
 
   bool onKey(CGEventRef event);

@@ -40,6 +40,9 @@
 #include <libproc.h>
 #include <mach-o/dyld.h>
 #include <math.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -763,9 +766,52 @@ void OSXScreen::disable()
   m_isOnScreen = m_isPrimary;
 }
 
+// Trackpad bridge integration. When DESKFLOW_TRACKPAD_BRIDGE=1, a companion
+// capture process streams raw multitouch frames to a virtual Precision
+// Touchpad on the client, so this screen must (a) tell it which screen is
+// active and (b) stop forwarding its own scroll events, which the bridge now
+// carries at full fidelity.
+bool OSXScreen::trackpadBridgeEnabled()
+{
+  static int cached = -1;
+  if (cached < 0) {
+    const char *v = ::getenv("DESKFLOW_TRACKPAD_BRIDGE");
+    cached = (v != nullptr && *v == '1') ? 1 : 0;
+    if (cached) {
+      LOG_INFO("trackpad bridge mode enabled: scroll forwarding disabled");
+    }
+  }
+  return cached == 1;
+}
+
+void OSXScreen::notifyTrackpadBridge(bool remoteActive) const
+{
+  if (!trackpadBridgeEnabled()) {
+    return;
+  }
+  // 4-byte magic + 1 byte flag, matching tb_ctrl in the bridge's shared header
+  struct {
+    uint32_t magic;
+    uint8_t remoteActive;
+  } __attribute__((packed)) msg = {0x43524254u, static_cast<uint8_t>(remoteActive ? 1 : 0)};
+
+  int sock = ::socket(AF_INET, SOCK_DGRAM, 0);
+  if (sock < 0) {
+    return;
+  }
+  struct sockaddr_in addr;
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = htons(24802);
+  ::sendto(sock, &msg, sizeof(msg), 0, reinterpret_cast<struct sockaddr *>(&addr), sizeof(addr));
+  ::close(sock);
+}
+
 void OSXScreen::enter()
 {
   m_isOnScreen = true;
+  notifyTrackpadBridge(false); // back on this screen; bridge should stop
   showCursor();
 
   if (m_isPrimary) {
@@ -804,6 +850,7 @@ void OSXScreen::leave()
 
   // now off screen
   m_isOnScreen = false;
+  notifyTrackpadBridge(true); // remote screen active; bridge may stream
 }
 
 bool OSXScreen::setClipboard(ClipboardID, const IClipboard *src)
@@ -1046,6 +1093,11 @@ bool OSXScreen::onMouseButton(bool pressed, uint16_t macButton)
 
 bool OSXScreen::onMouseWheel(int32_t xDelta, int32_t yDelta) const
 {
+  // the bridge delivers scroll as real touchpad contacts; forwarding here too
+  // would double every scroll
+  if (trackpadBridgeEnabled()) {
+    return true;
+  }
   LOG_VERBOSE("event: button wheel delta=%+d,%+d", xDelta, yDelta);
   sendEvent(EventTypes::PrimaryScreenWheel, WheelInfo::alloc(xDelta, yDelta));
   return true;
@@ -1053,6 +1105,9 @@ bool OSXScreen::onMouseWheel(int32_t xDelta, int32_t yDelta) const
 
 bool OSXScreen::onMouseWheelContinuous(double xPixels, double yPixels) const
 {
+  if (trackpadBridgeEnabled()) {
+    return true;
+  }
   // wheel deltas are in 1/120ths of a notch. one notch on Windows scrolls
   // 3 lines (~60px in most apps), so 60px of finger travel per notch keeps
   // content movement on the client roughly 1:1 with the trackpad. no
